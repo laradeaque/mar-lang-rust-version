@@ -1,0 +1,13 @@
+I had issue with consistency. I believe its due to the project complexity.
+
+Many fights with the compiler due to a function called evaluate_expression 
+which wanted to return different types, which were not clear at compile time
+but I managed to work around it differrently.
+
+Main reason for lazy expression i.e Unless we want pass sth as an argument we 
+dont need to get result of the expression, since who knows it may never be used.
+and why waste compute power computing.
+
+
+
+

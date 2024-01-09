@@ -1,0 +1,93 @@
+use std.io.IntInput;
+use std.nettools.TCPListener;
+
+fn serve(connection) {
+	print("Waiting for requests...")
+	conn.listen()
+}
+
+let port = IntInput("Enter port to listen on: ");
+let conn = TCPListener.connect_port(port);
+
+serve(conn)
+
+
+let a = 1;
+let _b = 3;
+
+let one_float = 1.;
+
+let c = a + _b;
+print("c is ", c)
+
+# This is a comment
+let list = ["eggs", "sugar", "yeast", "floor", "milk", "chocolate", "blueband"];
+print("Cooking a cake you need:\n")
+
+for (x : list) {
+	print("\t \\", x)
+}
+
+let search = "milk";
+
+match search {
+     "eggs" => {print("Found eggs")},
+     "sugar" => {print("Found sugar")},
+     "yeast" => {print("Found yeast")},
+     "floor" => {print("Found floor")},
+     "milk" => {print("Found milk")},
+     "chocolate" => {print("Found chocolate")},
+     "blueband" => {print("Found blueband")},
+
+     .. => {print("Found nothing")}
+}
+while (c > 0) {
+	if (c==2) {
+		break
+	}
+	print(c)
+	c++;
+}
+
+if (c == 0) {
+	print("c is 0")
+} else {
+	print("Who cares")
+}
+
+let lights_on = True;
+let sleepy = False;
+
+let car = None;
+
+use a;
+use a.b;
+use marlib.kernel.BaseClass;
+
+class Car(BaseClass) {
+	func Car(self, manuacturer) {
+		let self.manufacturer = manufacturer;
+	}
+
+	func drive(self) {
+		print("Driving ...")
+	}
+}
+
+class ElectricCar(Car) {
+	func ElectricCar(self, name, model, manufacturer) {
+		parent Car(manufacturer)
+		let self.name = name;
+		let self.model = model;
+	}
+
+	func charge(self) {
+		print("Charging...")
+	}
+}
+
+func sum(a, b) {
+	let c = a + b;
+	rn c;
+}
+#from math use pi as PI
