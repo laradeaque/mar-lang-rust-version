@@ -32,7 +32,7 @@ let long_expression = 1000 + 1200 - 343 - 54.55 - 555 - 54 - 324 / 32;
 
 println(message)
 
-# Thousands of lines..
+# Thousands of lines.. 
 ```
  Although the variable `long_expression` is not super big and our program is not 
  that big think of a longer expression and a program extending hundreds of lines 
@@ -58,7 +58,7 @@ let c = b - a;              # You expect 1, but its not 1 i am explaining below
 let d = 5;
 
 let e = c + d; 
-let f = e * a;
+let f = e * a; 
 ``` 
 In memory 
 c = {b - a}
@@ -75,7 +75,7 @@ out of scope.
 So far this feature has not raised  any issue/bug, but with more testing I hope it shall
 be more reliable.
 
-2.Differentiation of `print` and `println` - This is to add flexibility to the 
+2. Differentiation of `print` and `println` - This is to add flexibility to the 
       output.
 
 `print` - does not add a line feed at the end of printing;
@@ -85,12 +85,13 @@ Example
 print("Hello, ")
 print("World!\n")
 
-println("Hello, World!")
-``` 
+println("Hello, World!") 
+```
 
 #Things I hope to do in future versions
 - Add more functionality, Classes, Loops, Match, If e.t.c
 - Write language libraries, math, date, sys, net, files e.t.c
+- Borrowing and Ownership system (For Mar)
 - Restructure code.
 - Modularize Interpreter.
 - Optimize Interpreter

@@ -4,7 +4,7 @@ use std::collections::HashMap;
 #[derive(Debug, PartialEq)]
 enum TokenType {
     ARROW,
-    AND,
+    AND,		// &&
     ASSIGN,
     ASTERISK,
     CARET,
@@ -28,14 +28,16 @@ enum TokenType {
     LPAREN,
     LT,
     LTE,
+    MATCHOR, // Match or |
     MODULUS,
     MINUS,
     NE,
     NEGATE,
-    OR,
+    OR,          // Normal Or ||
     PLUS,    
     RBRACE,
     RBRACKET,
+    REF,		// '&' -> pointer thing;
     RPAREN,
     SEMI,
     SOC,
@@ -53,8 +55,8 @@ const KEYWORDS: [&str; 17] = [
     "True",
     "False",
     "None",
-    "class",
-    "parent",
+    "struct",
+    "impl",
     "rn",
     "break",
     "continue",
@@ -304,16 +306,32 @@ impl Lexer {
                         }
                     },
                     '&' => {
-                        tokens.push(
-                            Token {token_type: TokenType::AND, token_value: "&".to_string()}
-                        );
-                        self.advance();
+						if self.peek() == Some('&') {
+                            tokens.push(
+                                Token {token_type: TokenType::AND, token_value: "&&".to_string()}
+                            );
+                            self.advance();
+                            self.advance();
+                        } else {
+                            tokens.push(
+                                Token {token_type: TokenType::REF, token_value: "&".to_string()}
+                            );
+                            self.advance();
+                        }
                     },
                     '|' => {
-                        tokens.push(
-                            Token {token_type: TokenType::OR, token_value: "|".to_string()}
-                        );
-                        self.advance();
+						if self.peek() == Some('|') {
+                            tokens.push(
+                                Token {token_type: TokenType::OR, token_value: "||".to_string()}
+                            );
+                            self.advance();
+                            self.advance();
+                        } else {
+                            tokens.push(
+                                Token {token_type: TokenType::MATCHOR, token_value: "|".to_string()}
+                            );
+                            self.advance();
+                        }
                     },
                     _ => {
                         println!("SyntaxError: Unknown Character\nline > {}\nCharacter: '{}'", self.line, chr);
@@ -453,18 +471,18 @@ enum ASTNode {
 
     If {condition: Rc<ASTNode>, if_block: Vec<ASTNode>, else_block: Option<Vec<ASTNode>>},
     Match {option: Rc<ASTNode>, cases: Vec<ASTNode>},
-    Option { condition: Rc<ASTNode>, block: Vec<ASTNode>},
+    Option { condition: Vec<ASTNode>, block: Vec<ASTNode>},
     Default,
 
     While {condition: Rc<ASTNode>, body:Vec<ASTNode>},
-    For {loop_vars: Vec<ASTNode>, object: Rc<ASTNode>, body:Vec<ASTNode>},
+    For {loop_var: Rc<ASTNode>, object: Rc<ASTNode>, body:Vec<ASTNode>},
 
     Function{name: Rc<ASTNode>, parameters: (Option<Vec<ASTNode>>, Option<Vec<ASTNode>>), block: Vec<ASTNode>},
     FunctionCall{ name: Rc<ASTNode>, args: Vec<ASTNode>},
     Return {list: Vec<ASTNode>},
     
-    Class { name: Rc<ASTNode>,  parent_classes:Option<Vec<ASTNode>>, block:Vec<ASTNode> },
-    Parent { name: Rc<ASTNode>, arguments: Vec<ASTNode> },
+    Struct { name: Rc<ASTNode>, attributes: Vec<ASTNode> },
+    Impl{name: Rc<ASTNode>, block: Vec<ASTNode>},
 
     Use {modules: Vec<ASTNode>}
 }
@@ -526,7 +544,8 @@ impl Parser {
         match self.current_token.token_type {
             TokenType::KEYWORD => {
                 match self.current_token.token_value.as_str() {
-					"class" => return self.class_declaration(),
+					"struct" => return self.struct_declaration(),
+					"impl" => return self.impl_declaration(),
 					"fn" => return self.function_declaration(),
                     "while" => return self.while_loop(),
                     "for" => return self.for_loop(),
@@ -534,7 +553,6 @@ impl Parser {
                     "match" => return self.match_statement(),
                     "let" => return self.variable_declaration(),
                     "rn" => return self.return_statement(),
-                    "parent" => self.parent_initialisation(),
                     "use" => self.use_statement(),
                     _ => return self.expression_statement()
                 }
@@ -542,6 +560,14 @@ impl Parser {
             _ => self.expression_statement()
         }
     }
+
+    fn impl_declaration(&mut self) -> ASTNode {
+		self.eat(&TokenType::KEYWORD);
+		let name = self.id_statement();
+
+		let block = self.block();
+		ASTNode::Impl{name: Rc::new(name), block}
+	}
 
     fn use_statement(&mut self) -> ASTNode {
         // "use" id_statement (",", id_statement)* ";"
@@ -557,18 +583,6 @@ impl Parser {
 
         self.eat(&TokenType::SEMI);
         return ASTNode::Use {modules};
-    }
-
-    fn parent_initialisation(&mut self) -> ASTNode {
-        // "parent" id_statement args
-        self.eat(&TokenType::KEYWORD);
-        let name = self.id_statement();
-
-        self.eat(&TokenType::LPAREN);
-        let arguments = self.arguments();
-        self.eat(&TokenType::RPAREN);
-
-        return ASTNode::Parent{ name: Rc::new(name), arguments};
     }
 
     fn return_statement(&mut self) -> ASTNode {
@@ -608,20 +622,31 @@ impl Parser {
         // expression "=>" block
         let mut cases: Vec<ASTNode> = vec![];
         
-        let condition = Rc::new(self.expression());
+        let mut condition = vec![self.expression()];
+        while self.current_token.token_type == TokenType::MATCHOR {
+		    self.eat(&TokenType::MATCHOR);
+		    condition.push(self.expression());
+        }
         self.eat(&TokenType::ARROW);
         cases.push(ASTNode::Option {condition, block: self.block()});
         
-        while self.current_token.token_type == TokenType::COMMA {
+        while
+			self.current_token.token_type == TokenType::COMMA &&
+			self.current_token.token_type != TokenType::RBRACE
+		{
             self.eat(&TokenType::COMMA);
 
             if self.current_token.token_type == TokenType::DEFAULT {
-                cases.push(self.expression());
-                break;
+                cases.push( self.expression());
+                continue
             }
-            let condition = Rc::new(self.expression());
+            let mut condition = vec![self.expression()];
+            
+			while self.current_token.token_type == TokenType::MATCHOR {
+				self.eat(&TokenType::MATCHOR);
+				condition.push(self.expression());
+			}
             self.eat(&TokenType::ARROW);
-
             cases.push(ASTNode::Option {condition, block: self.block()});
         }
 
@@ -658,18 +683,12 @@ impl Parser {
         let obj = self.id_statement();
 
         self.eat(&TokenType::COLON);
-        let mut loop_vars: Vec<ASTNode> = vec![];
-        loop_vars.push(self.id_statement());
-
-        while self.current_token.token_type == TokenType::COMMA {
-            self.eat(&TokenType::COMMA);
-            loop_vars.push(self.id_statement());
-        }
+        let loop_var = self.id_statement();
         self.eat(&TokenType::RPAREN);
 
         let body = self.block();
 
-        return ASTNode::For{loop_vars, object: Rc::new(obj), body};
+        return ASTNode::For{loop_var: Rc::new(loop_var), object: Rc::new(obj), body};
     }
 
     fn while_loop(&mut self) -> ASTNode {
@@ -751,23 +770,31 @@ impl Parser {
         return (Some(in_), None);
     }
 
-    fn class_declaration(&mut self) -> ASTNode {
+    fn struct_declaration(&mut self) -> ASTNode {
 		// class name parent_classes block
 		self.eat(&TokenType::KEYWORD);
 		let name = self.id_statement();
 
-		let parent_classes: Option<Vec<ASTNode>> = match self.current_token.token_type {
-			TokenType::LPAREN => {
-				 Some(self.parent_classes())
-			},
-			_ => {
-				None
-			}
-		};
+		let mut attributes: Vec<ASTNode> = vec![];
+		if self.current_token.token_type == TokenType::SEMI {
+			self.eat(&TokenType::SEMI);
+			return ASTNode::Struct{ name:Rc::new(name), attributes };
+        }
+        
+		self.eat(&TokenType::LBRACE);
+        if self.current_token.token_type == TokenType::RBRACE {
+			self.eat(&TokenType::RBRACE);
+			return ASTNode::Struct{ name:Rc::new(name), attributes };
+        }
+        attributes.push(self.expression());
 
-        let block = self.block();
+        while self.current_token.token_type == TokenType::COMMA {
+			self.eat(&TokenType::COMMA);
+            attributes.push(self.expression());
+        }
+        self.eat(&TokenType::RBRACE);
 
-        return ASTNode::Class{ name:Rc::new(name), parent_classes, block };
+        return ASTNode::Struct{ name:Rc::new(name), attributes };
 	}
 
     fn block(&mut self) -> Vec<ASTNode> {
@@ -782,29 +809,7 @@ impl Parser {
 
         return statements;
     }
-
-	fn parent_classes(&mut self) -> Vec<ASTNode> {
-		// "(" id_statements* ")"
-		self.eat(&TokenType::LPAREN);
-		let mut list: Vec<ASTNode> = vec![];
-
-		if self.current_token.token_type == TokenType::RPAREN {
-            self.eat(&TokenType::RPAREN);
-            return list;
-        }
-
-        list.push(self.id_statement());
-
-        while self.current_token.token_type == TokenType::COMMA {
-            self.eat(&TokenType::COMMA);
-            list.push(self.id_statement());
-        }
-
-        self.eat(&TokenType::RPAREN);
-        return list;
-    }
-           
-
+    
     fn variable_declaration(&mut self) -> ASTNode {
         // let name = value;
         // or
@@ -859,10 +864,10 @@ impl Parser {
 
         while [TokenType::AND, TokenType::OR].contains(&self.current_token.token_type) {
             if self.current_token.token_type == TokenType::AND {
-                operation = "&".to_string();
+                operation = "&&".to_string();
                 self.eat(&TokenType::AND);
             } else {
-                operation = "|".to_string();
+                operation = "||".to_string();
                 self.eat(&TokenType::OR);
             }
             result = ASTNode::BinaryOperation {
@@ -1040,9 +1045,16 @@ impl Parser {
             return ASTNode::ExpressionList{ list: expr_list };
         } else if self.current_token.token_type == TokenType::DEFAULT {
             self.eat(&TokenType::DEFAULT);
+            let mut condition = vec![ASTNode::Default];
+
+            while self.current_token.token_type == TokenType::MATCHOR {
+				self.eat(&TokenType::MATCHOR);
+				condition.push(self.expression());
+			}
             self.eat(&TokenType::ARROW);
+			
             ASTNode::Option {
-                condition: Rc::new(ASTNode::Default),
+                condition,
                 block: self.block()
             }
         } else if self.current_token.token_type == TokenType::PLUS {
@@ -1066,6 +1078,7 @@ impl Parser {
         } else {
             println!("ParseError: Unexpected Token");
             println!("Token > {:?}", &self.current_token);
+            println!("Didn't complete parsing: {:?}", &self.tokens);
             std::process::exit(1);
         }
         
@@ -1128,38 +1141,6 @@ impl Parser {
     }
 }
 
-/*
-    Integer {value: i32},
-    Float {value: f64},
-    Str { value: String },
-    None,
-    ID { name: String },
-    Var { name: Rc<ASTNode>, value: Option<Rc<ASTNode>>},
-    PropertyAccess { object: Rc<ASTNode>, property: Rc<ASTNode>},
-    Index {object: Rc<ASTNode>, index: Rc<ASTNode>},
-    Flow { value: String },
-
-    UnaryOperation { operand: Rc<ASTNode>, operator: String},
-    BinaryOperation {left: Rc<ASTNode>, operation: String, right: Rc<ASTNode>},
-    ExpressionList {list: Vec<ASTNode>},
-
-    If {condition: Rc<ASTNode>, if_block: Vec<ASTNode>, else_block: Option<Vec<ASTNode>>},
-    Match {option: Rc<ASTNode>, cases: Vec<ASTNode>},
-    Option { condition: Rc<ASTNode>, block: Vec<ASTNode>},
-    Default,
-
-    While {condition: Rc<ASTNode>, body:Vec<ASTNode>},
-    For {loop_vars: Vec<ASTNode>, object: Rc<ASTNode>, body:Vec<ASTNode>},
-
-    Function{name: Rc<ASTNode>, parameters: (Option<Vec<ASTNode>>, Option<Vec<ASTNode>>), block: Vec<ASTNode>},
-    FunctionCall{ name: Rc<ASTNode>, args: Vec<ASTNode>},
-    Return {list: Vec<ASTNode>},
-    
-    Class { name: Rc<ASTNode>,  parent_classes:Option<Vec<ASTNode>>, block:Vec<ASTNode> },
-    Parent { name: Rc<ASTNode>, arguments: Vec<ASTNode> },
-
-    Use {modules: Vec<ASTNode>}
-*/
 #[derive(Debug, Clone)]
 enum LazyResult {
 	Null, //No return used int
@@ -1176,16 +1157,14 @@ struct Executor {
     ast: Vec<ASTNode>,
     current_scope: HashMap<String, Option<LazyResult>>,
     scopes: Vec<HashMap<String, Option<LazyResult>>>,
-    functions: Vec<
-					HashMap<
-						String,
-						(
-							(Option<Vec<ASTNode>>, Option<Vec<ASTNode>>),
-							Vec<ASTNode>
-						)
-					>
-				>,
-    return_value: Option<Value>
+    functions: Vec<HashMap<String, ((Option<Vec<ASTNode>>, Option<Vec<ASTNode>>), Vec<ASTNode>)>>,
+	local_variables: Vec<String>,
+    return_value: Option<Value>,
+    structs: HashMap<String, Vec<ASTNode>>,
+    structs_impl: HashMap<String, Vec<ASTNode>>,
+    break_loop: bool,
+    continue_loop: bool,
+    
 }
 
 const BUILTIN_FUNCTIONS: [&str; 2] = [
@@ -1193,7 +1172,7 @@ const BUILTIN_FUNCTIONS: [&str; 2] = [
 	"println",
 ];
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, PartialOrd)]
 struct Value {
 	int_value: Option<i32>,
 	float_value: Option<f64>,
@@ -1211,6 +1190,7 @@ struct Value {
  	 * 127 - ----- - Undefined
  	 */
 }
+
 use std::fmt::Display;
 use std::fmt::Formatter;
 
@@ -1245,14 +1225,18 @@ impl Executor {
             functions: vec![HashMap::new()],
             scopes: vec![HashMap::new()],
             current_scope: HashMap::new(),
+            structs: HashMap::new(),
+            structs_impl: HashMap::new(),
+            local_variables: vec![],
             return_value: None,
+            break_loop: false,
+			continue_loop: false,
         }
     }
 
     fn execute(&mut self) {
 		for statement in self.ast.clone().into_iter() {
 			self.execute_statement(statement);
-			//println!("{:?}", self.scopes);
 		}
     }
 
@@ -1264,17 +1248,193 @@ impl Executor {
 			ASTNode::Function{name, parameters, block} => {
 				return self.func_declaration(name, parameters, block);
 			},
-			ASTNode::FunctionCall{ref name, args} => {
-				return self.func_call(&name, args);
-			},
 			ASTNode::Return{ list } => {
 				return self.rn_statement(list);
-			}
-			_ => {
-				println!(">> {statement:?}");
-				return LazyResult::Null;
 			},
+			ASTNode::If{condition, if_block, else_block} => {
+				return self.if_execution((*condition).clone(), if_block, else_block);
+			},
+			ASTNode::Match{option, cases} => {
+				return self.match_execution((*option).clone(), cases);
+			},
+			ASTNode::While{condition, body} => {
+				return self.while_execution((*condition).clone(), body);
+			},
+			ASTNode::For {loop_var, object, body} => {
+				//For {loop_var: Rc<ASTNode>, object: Rc<ASTNode>, body:Vec<ASTNode>},
+				return self.for_execution((*loop_var).clone(), (*object).clone(), body);
+			},
+			ASTNode::Struct {name, attributes} => {
+				//Class { name: Rc<ASTNode>,  parent_classes:Option<Vec<ASTNode>>, block:Vec<ASTNode> },
+				return self.struct_execution((*name).clone(), attributes);
+			},
+			ASTNode::Impl{ name, block } => {
+				return self.impl_execution((*name).clone(), block);
+			},
+			_ => {
+				let value = self.evaluate(statement);
+				return self.value2_lazy(value);
+			}
 		}
+	}
+
+	fn impl_execution(&mut self, name: ASTNode, block:Vec<ASTNode>) -> LazyResult {
+		let struct_name = match name {
+			ASTNode::ID{ref name} => {
+				name.to_string()
+			},
+			_ => {
+				println!("RTE: Invalid Class name");
+				std::process::exit(1);
+			}
+		};
+
+		self.structs_impl.insert(struct_name, block);
+		return LazyResult::Null;
+	}
+
+	fn struct_execution(&mut self, name: ASTNode, attributes: Vec<ASTNode>) -> LazyResult {
+		let struct_name = match name {
+			ASTNode::ID{ref name} => {
+				name
+			},
+			_ => {
+				println!("RTE: Invalid Class name");
+				std::process::exit(1);
+			}
+		};
+		
+		self.structs.insert(struct_name.to_string(), attributes);
+		
+		return LazyResult::Null;
+	}
+		
+	fn for_execution(&mut self, loop_var: ASTNode, object: ASTNode, body:Vec<ASTNode>) -> LazyResult {
+		let value = self.evaluate(object);
+
+		let iterable: Vec<Value> = match self.value2_lazy(value) {
+			LazyResult::List(value) => {
+				value
+			},
+			_ => {
+				println!("Iterable must be a Vector or something Iterable");
+				std::process::exit(1);
+			}
+		};
+
+		let mut new_scope: HashMap<String, Option<LazyResult>> = HashMap::new();
+
+		let var_name = match loop_var {
+			ASTNode::ID{ref name} => {
+				name
+			},
+			_ => {
+				println!("RTE: Invalid Variable: For loop(loop variable)");
+				std::process::exit(1);
+			}
+		};
+
+		new_scope.insert(var_name.to_string(), None);
+		self.set_scope(new_scope);
+		
+		for value in iterable {
+			if self.continue_loop { 
+				self.continue_loop = false;
+				continue
+			}
+
+			let lazy_value = self.value2_lazy(value);
+			self.current_scope.insert(var_name.to_string(), Some(lazy_value));
+			
+			let flag = self.execute_block(body.clone());
+			if self.break_loop || flag { break }				
+		}
+		if self.break_loop {self.break_loop = false;}
+
+		self.clean_scope();
+		return LazyResult::Null;
+	}
+
+	fn while_execution(&mut self, condition: ASTNode, body: Vec<ASTNode>) -> LazyResult {
+		let mut condition_value = self.evaluate(condition.clone());
+		let true_value = self.lazy2_value(LazyResult::Bool(true));
+		self.set_scope(HashMap::new());
+
+		while condition_value == true_value {
+			for line in body.clone() {
+				if self.continue_loop { 
+					self.continue_loop = false;
+					continue
+				}
+			
+				let _ = self.execute_statement(line);
+				condition_value = self.evaluate(condition.clone());
+				
+				if self.break_loop || self.return_value.is_some() { break }
+			}
+			if self.break_loop || self.return_value.is_some() {
+				self.break_loop = false;
+				break
+			}
+		}
+		
+		self.clean_scope();
+		return LazyResult::Null;
+	}
+
+	fn match_execution(&mut self, option: ASTNode, cases: Vec<ASTNode>) -> LazyResult {
+		let option = self.evaluate(option);
+		let true_value = self.lazy2_value(LazyResult::Bool(true));
+		let mut value: Value;
+		let mut flag: bool;
+
+		for case in cases {
+			let ASTNode::Option {condition, block} = case else {
+				println!("(Int)Didn't find an option block");
+				std::process::exit(1);
+			};
+			flag = true;
+			
+			for partial_condition in condition {
+				value = self.evaluate(partial_condition);
+				
+				if value != option && value != true_value {
+					flag = false;
+					break;
+				}
+			}
+
+			if flag {
+				let _ = self.execute_block(block);
+				break;
+			}
+		}
+		return LazyResult::Null;
+	}
+
+	fn if_execution(&mut self, condition: ASTNode, if_block: Vec<ASTNode>, else_block: Option<Vec<ASTNode>>) -> LazyResult {
+		let value = self.evaluate(condition);
+		let result: LazyResult = self.value2_lazy(value);
+
+		let condition = match result {
+			LazyResult::Bool(value) => {
+				value
+			},
+			_ => {
+				println!("RTE: Invalid `If Condition`.\nCondition in a If statement are supposed to evaluate to true or false");
+				std::process::exit(1);
+			}
+		};
+		
+		if condition {
+			let _ = self.execute_block(if_block);
+		} else {
+			if let Some(else_clause) = else_block {
+				let _ = self.execute_block(else_clause);
+			}
+		}
+
+		return LazyResult::Null;
 	}
 
 	fn rn_statement(&mut self, list: Vec<ASTNode>) -> LazyResult {
@@ -1337,6 +1497,9 @@ impl Executor {
 					return LazyResult::Null;
 				}
 			}
+		} else if self.structs.contains_key(func_name) {
+			// handle class constructor
+			todo!("Handle class constructor at line 1502");
 		} else {
 			return self.execute_func(func_name.to_string(), args);
 		}
@@ -1394,6 +1557,16 @@ impl Executor {
 					value_type: 3_u8
 				}
 			},
+			ASTNode::Default => {
+				Value {
+					int_value: None,
+					float_value: None,
+					bool_value: Some(true),
+					string_value: None,
+					list_value: None,
+					value_type: 2_u8
+				}
+			},
 			ASTNode::None => {
 				Value {
 					int_value: None,
@@ -1415,6 +1588,41 @@ impl Executor {
 					value_type: 5_u8
 				}
 			},
+			ASTNode::Index{object, index} => {
+				let vector = self.evaluate((*object).clone());
+				let vector_value: Vec<Value> = match self.value2_lazy(vector) {
+					LazyResult::List(value) => value,
+					_ => {
+						println!("RTE: Cannot Index object");
+						std::process::exit(1);
+					}
+				};
+				
+				let index = self.evaluate((*index).clone());
+				let index_value: usize = match self.value2_lazy(index) {
+					LazyResult::Int(value) => {
+						if value < 0 {
+							// We are adding to check if we can get the position, -1 for len() is +1
+							let len_check = ((vector_value.len() as i32)) + value;
+							
+							if len_check < 0 {
+								println!("RTE: Invalid index to a vector with length `{}`", vector_value.len());
+								std::process::exit(1);
+							} else {
+								((vector_value.len() as i32) + value) as usize
+							}
+						} else {
+							value as usize
+						}
+					},
+					_ => {
+						println!("RTE: You can only index a Vector with Integer only.");
+						std::process::exit(1);
+					}
+				};
+				
+				vector_value[index_value].clone()
+			},
 			ASTNode::ID{ name } => {
 				let rn_lazy_val = self.get_variable_value(&name).unwrap();
 				
@@ -1431,7 +1639,7 @@ impl Executor {
 					}
 				}
 				return rn_value;
-			}
+			},
 			ASTNode::FunctionCall{ref name, args} => {
 				let var = self.func_call(&name, args);
 
@@ -1443,6 +1651,13 @@ impl Executor {
 			ASTNode::UnaryOperation {ref operand, ref operator} => {
 				return self.evaluate_unary_expression(operator.to_string(), operand.clone());
 			},
+			ASTNode::Flow {ref value} => {
+				match value.as_str() {
+					"break" => self.break_loop = true,
+					_ => self.continue_loop = true,
+				}
+				return self.lazy2_value(LazyResult::Null);
+			}
 			_ => {
 				println!("Invalid expression at {expression:#?}");
 				std::process::exit(1);
@@ -1482,7 +1697,7 @@ impl Executor {
 								return self.lazy2_value(LazyResult::Int(ll_value + lr_value));
 							},
 							LazyResult::Float(lr_value) => {
-								return self.lazy2_value(LazyResult::Float(ll_value as f64 + lr_value));
+								return self.lazy2_value(LazyResult::Int( (ll_value as f64 + lr_value) as i32 ));
 							},
 							LazyResult::Bool(..) => {
 								println!("RTE: No implementation for `Int + bool`");
@@ -1679,7 +1894,7 @@ impl Executor {
 								return self.lazy2_value(LazyResult::Int(ll_value - lr_value));
 							},
 							LazyResult::Float(lr_value) => {
-								return self.lazy2_value(LazyResult::Float(ll_value as f64 - lr_value));
+								return self.lazy2_value(LazyResult::Int((ll_value as f64 - lr_value) as i32));
 							},
 							LazyResult::Bool(..) => {
 								println!("RTE: No implementation for `Int - bool`");
@@ -1876,7 +2091,7 @@ impl Executor {
 								return self.lazy2_value(LazyResult::Int(ll_value / lr_value));
 							},
 							LazyResult::Float(lr_value) => {
-								return self.lazy2_value(LazyResult::Float(ll_value as f64 / lr_value));
+								return self.lazy2_value(LazyResult::Int((ll_value as f64 / lr_value) as i32));
 							},
 							LazyResult::Bool(..) => {
 								println!("RTE: No implementation for `Int / bool`");
@@ -2073,7 +2288,7 @@ impl Executor {
 								return self.lazy2_value(LazyResult::Int(ll_value * lr_value));
 							},
 							LazyResult::Float(lr_value) => {
-								return self.lazy2_value(LazyResult::Float(ll_value as f64 * lr_value));
+								return self.lazy2_value(LazyResult::Int((ll_value as f64 * lr_value) as i32));
 							},
 							LazyResult::Bool(..) => {
 								println!("RTE: No implementation for `Int * bool`");
@@ -2270,6 +2485,1974 @@ impl Executor {
 				}	
 			}, 
 			
+			"^" => {
+				match lazy_left_value {
+					LazyResult::Int(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(lr_value) => {
+								return self.lazy2_value(LazyResult::Int(i32::pow(ll_value, lr_value as u32)));
+							},
+							LazyResult::Float(lr_value) => {
+								return self.lazy2_value(LazyResult::Int(f64::powf(ll_value as f64, lr_value) as i32));
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Int ^ bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `Int ^ Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `Int ^ None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `Int ^ Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `Int ^ Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::Float(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(lr_value) => {
+								return self.lazy2_value(LazyResult::Float(f64::powf(ll_value, lr_value as f64)));
+							},
+							LazyResult::Float(lr_value) => {
+								return self.lazy2_value(LazyResult::Float(f64::powf(ll_value, lr_value as f64)));
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Float ^ bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `Float ^ Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `Float ^ None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `Float ^ Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `Float ^ Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::Bool(..) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `bool ^ Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `bool ^ Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `bool ^ bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `bool ^ Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `bool ^ None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `bool ^ Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `bool ^ Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::Str(..) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `Str ^ Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `Str ^ Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Str ^ bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `Str ^ Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `Str ^ None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `Str ^ Vector`");
+								std::process::exit(1);
+							},
+							_ => {
+								println!("RTE: No implementation for `Str ^ Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::None => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `None ^ Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `None ^ Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `None ^ bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `None ^ Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `None ^ None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `None ^ Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `None ^ Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::List(..) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `Vector ^ Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `Vector ^ Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Vector ^ Bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `Vector ^ Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `Vector ^ None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `Vector ^ Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `Vector ^ Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					_ => {
+						println!("RTE: No implemention for {lazy_left_value:?} ^ Type");
+						std::process::exit(1);
+					}
+				}	
+			}, 
+			
+			"%" => {
+				match lazy_left_value {
+					LazyResult::Int(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(lr_value) => {
+								return self.lazy2_value(LazyResult::Int(ll_value % lr_value));
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `Int % Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Int % bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `Int % Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `Int % None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `Int % Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `Int % Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::Float(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `Float % Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(lr_value) => {
+								return self.lazy2_value(LazyResult::Float(ll_value % lr_value));
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Float % bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `Float % Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `Float % None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `Float % Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `Float % Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::Bool(..) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `bool % Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `bool % Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `bool % bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `bool % Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `bool % None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `bool % Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `bool % Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::Str(..) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `Str % Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `Str % Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Str % bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `Str % Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `Str % None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `Str % Vector`");
+								std::process::exit(1);
+							},
+							_ => {
+								println!("RTE: No implementation for `Str % Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::None => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `None % Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `None % Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `None % bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `None % Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `None % None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `None % Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `None % Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::List(..) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `Vector % Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `Vector % Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Vector % Bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `Vector % Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `Vector % None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `Vector % Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `Vector % Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					_ => {
+						println!("RTE: No implemention for {lazy_left_value:?} % Type");
+						std::process::exit(1);
+					}
+				}	
+			}, 
+			
+			">" => {
+				match lazy_left_value {
+					LazyResult::Int(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value > lr_value));
+							},
+							LazyResult::Float(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value as f64 > lr_value));
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Int > bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `Int > Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `Int > None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `Int > Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `Int > Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::Float(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value > lr_value as f64));
+							},
+							LazyResult::Float(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value > lr_value));
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Float > bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `Float > Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `Float > None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `Float > Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `Float > Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::Bool(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `bool > Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `bool > Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value > lr_value));
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `bool > Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `bool > None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `bool > Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `bool > Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::Str(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `Str > Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `Str > Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Str > bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value.as_str() > lr_value.as_str()));
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `Str > None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `Str > Vector`");
+								std::process::exit(1);
+							},
+							_ => {
+								println!("RTE: No implementation for `Str > Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::None => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `None > Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `None > Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `None > bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `None > Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `None > None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `None > Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `None > Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::List(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `Vector > Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `Vector > Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Vector > Bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `Vector > Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `Vector > None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value > lr_value));
+							}
+							_ => {
+								println!("RTE: No implementation for `Vector > Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					_ => {
+						println!("RTE: No implemention for {lazy_left_value:?} > Type");
+						std::process::exit(1);
+					}
+				}	
+			}, 
+			
+			">=" => {
+				match lazy_left_value {
+					LazyResult::Int(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value >= lr_value));
+							},
+							LazyResult::Float(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value as f64 >= lr_value));
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Int >= bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `Int >= Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `Int >= None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `Int >= Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `Int >= Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::Float(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value >= lr_value as f64));
+							},
+							LazyResult::Float(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value >= lr_value));
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Float >= bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `Float >= Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `Float >= None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `Float >= Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `Float >= Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::Bool(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `bool >= Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `bool >= Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value >= lr_value));
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `bool >= Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `bool >= None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `bool >= Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `bool >= Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::Str(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `Str >= Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `Str >= Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Str >= bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value.as_str() >= lr_value.as_str()));
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `Str >= None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `Str >= Vector`");
+								std::process::exit(1);
+							},
+							_ => {
+								println!("RTE: No implementation for `Str >= Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::None => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `None >= Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `None >= Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `None >= bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `None >= Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `None >= None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `None >= Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `None >= Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::List(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `Vector >= Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `Vector >= Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Vector >= Bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `Vector >= Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `Vector >= None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value >= lr_value));
+							}
+							_ => {
+								println!("RTE: No implementation for `Vector >= Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					_ => {
+						println!("RTE: No implemention for {lazy_left_value:?} >= Type");
+						std::process::exit(1);
+					}
+				}	
+			}, 
+			
+			"<" => {
+				match lazy_left_value {
+					LazyResult::Int(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value < lr_value));
+							},
+							LazyResult::Float(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool((ll_value as f64) < lr_value));
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Int < bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `Int < Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `Int < None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `Int < Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `Int < Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::Float(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value < lr_value as f64));
+							},
+							LazyResult::Float(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value < lr_value));
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Float < bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `Float < Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `Float < None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `Float < Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `Float < Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::Bool(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `bool < Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `bool < Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value < lr_value));
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `bool < Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `bool < None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `bool < Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `bool < Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::Str(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `Str < Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `Str < Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Str < bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value.as_str() < lr_value.as_str()));
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `Str < None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `Str < Vector`");
+								std::process::exit(1);
+							},
+							_ => {
+								println!("RTE: No implementation for `Str < Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::None => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `None < Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `None < Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `None < bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `None < Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `None < None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `None < Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `None < Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::List(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `Vector < Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `Vector < Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Vector < Bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `Vector < Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `Vector < None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value < lr_value));
+							}
+							_ => {
+								println!("RTE: No implementation for `Vector < Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					_ => {
+						println!("RTE: No implemention for {lazy_left_value:?} < Type");
+						std::process::exit(1);
+					}
+				}	
+			}, 
+			
+			"<=" => {
+				match lazy_left_value {
+					LazyResult::Int(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value <= lr_value));
+							},
+							LazyResult::Float(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value as f64 <= lr_value));
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Int <= bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `Int <= Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `Int <= None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `Int <= Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `Int <= Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::Float(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value <= lr_value as f64));
+							},
+							LazyResult::Float(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value <= lr_value));
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Float <= bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `Float <= Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `Float <= None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `Float <= Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `Float <= Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::Bool(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `bool <= Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `bool <= Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value <= lr_value));
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `bool <= Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `bool <= None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `bool <= Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `bool <= Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::Str(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `Str <= Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `Str <= Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Str <= bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value.as_str() <= lr_value.as_str()));
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `Str <= None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `Str <= Vector`");
+								std::process::exit(1);
+							},
+							_ => {
+								println!("RTE: No implementation for `Str <= Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::None => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `None <= Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `None <= Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `None <= bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `None <= Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `None <= None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `None <= Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `None <= Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::List(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `Vector <= Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `Vector <= Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Vector <= Bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `Vector <= Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `Vector <= None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value <= lr_value));
+							}
+							_ => {
+								println!("RTE: No implementation for `Vector <= Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					_ => {
+						println!("RTE: No implemention for {lazy_left_value:?} <= Type");
+						std::process::exit(1);
+					}
+				}	
+			}, 
+			
+			"!=" => {
+				match lazy_left_value {
+					LazyResult::Int(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value != lr_value));
+							},
+							LazyResult::Float(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value as f64 != lr_value));
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Int != bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `Int != Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => { // 0 = None removed this assumption that 0 = None
+								println!("RTE: No implementation for `Int != None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `Int != Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `Int != Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::Float(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value != lr_value as f64));
+							},
+							LazyResult::Float(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value != lr_value));
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Float != bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `Float != Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => { //None = 0.0 removed it
+								println!("RTE: No implementation for `Float != Str`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `Float != Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `Float != Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::Bool(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `bool != Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `bool != Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value != lr_value));
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `bool != Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => { // false = None
+								println!("RTE: No implementation for `bool != Str`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `bool != Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `bool != Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::Str(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `Str != Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `Str != Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Str != bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value.as_str() != lr_value.as_str()));
+							},
+							LazyResult::None => { // None = "" removed this assumption
+								println!("RTE: No implementation for `Int != Str`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `Str != Vector`");
+								std::process::exit(1);
+							},
+							_ => {
+								println!("RTE: No implementation for `Str != Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					
+					LazyResult::None => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `None != Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `None != Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `None != Bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `None != Vector`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `None != None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `None != Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `None != Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::List(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `Vector != Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `Vector != Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Vector != Bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `Vector != Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `Vector != None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value != lr_value));
+							}
+							_ => {
+								println!("RTE: No implementation for `Vector != Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					_ => {
+						println!("RTE: No implemention for {lazy_left_value:?} != Type");
+						std::process::exit(1);
+					}
+				}	
+			}, 
+			
+			"==" => {
+				match lazy_left_value {
+					LazyResult::Int(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value == lr_value));
+							},
+							LazyResult::Float(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value as f64 == lr_value));
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Int == bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `Int == Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => { // 0 = None removed this assumption that 0 = None
+								println!("RTE: No implementation for `Int == None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `Int == Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `Int == Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::Float(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value == lr_value as f64));
+							},
+							LazyResult::Float(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value == lr_value));
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Float == bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `Float == Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => { //None = 0.0 removed it
+								println!("RTE: No implementation for `Float == Str`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `Float == Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `Float == Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::Bool(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `bool == Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `bool == Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value == lr_value));
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `bool == Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => { // false = None
+								println!("RTE: No implementation for `bool == None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `bool == Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `bool == Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::Str(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `Str == Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `Str == Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Str == bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value.as_str() == lr_value.as_str()));
+							},
+							LazyResult::None => { // None = "" removed this assumption
+								println!("RTE: No implementation for `Int == Str`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `Str == Vector`");
+								std::process::exit(1);
+							},
+							_ => {
+								println!("RTE: No implementation for `Str == Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					
+					LazyResult::None => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `None == Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `None == Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `None == Bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `None == Vector`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `None == None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `None == Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `None == Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::List(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `Vector == Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `Vector == Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Vector == Bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `Vector == Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `Vector == None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value == lr_value));
+							}
+							_ => {
+								println!("RTE: No implementation for `Vector == Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					_ => {
+						println!("RTE: No implemention for {lazy_left_value:?} == Type");
+						std::process::exit(1);
+					}
+				}	
+			}, 
+			
+			"&&" => {
+				match lazy_left_value {
+					LazyResult::Int(..) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `Int & bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `Int & bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Int & bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `Int & Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => { // 
+								println!("RTE: No implementation for `Int & None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `Int & Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `Int & Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::Float(..) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `Float & Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `Float & Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Float & bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `Float & Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => { //None = 0.0
+								println!("RTE: No implementation for `Float & Str`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `Float & Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `Float & Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::Bool(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `bool & Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `bool & Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value && lr_value));
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `bool & Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => { // false = None
+								println!("RTE: No implementation for `bool & None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `bool & Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `bool & Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::Str(..) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `Str & Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `Str & Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Str & bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `Str & Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => { 
+								println!("RTE: No implementation for `Str & None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `Str & Vector`");
+								std::process::exit(1);
+							},
+							_ => {
+								println!("RTE: No implementation for `Str & Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					
+					LazyResult::None => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `None & Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `None & Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `None & Bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `None & Vector`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `None & None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `None & Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `None & Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::List(..) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `Vector & Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `Vector & Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Vector & Bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `Vector & Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `Vector & None`");
+								std::process::exit(1);
+
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `Vector & Vector`");
+								std::process::exit(1);
+
+							}
+							_ => {
+								println!("RTE: No implementation for `Vector & Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					_ => {
+						println!("RTE: No implemention for {lazy_left_value:?} & Type");
+						std::process::exit(1);
+					}
+				}	
+			}, 
+			
+			"||" => {
+				match lazy_left_value {
+					LazyResult::Int(..) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `Int | bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `Int | bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Int | bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `Int | Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => { // 
+								println!("RTE: No implementation for `Int | None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `Int | Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `Int | Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::Float(..) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `Float | Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `Float | Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Float | bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `Float | Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => { //None = 0.0
+								println!("RTE: No implementation for `Float | Str`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `Float | Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `Float | Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::Bool(ll_value) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `bool | Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `bool | Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(lr_value) => {
+								return self.lazy2_value(LazyResult::Bool(ll_value || lr_value));
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `bool | Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => { // false = None
+								println!("RTE: No implementation for `bool | None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `bool | Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `bool | Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::Str(..) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `Str | Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `Str | Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Str | bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `Str | Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => { 
+								println!("RTE: No implementation for `Str | None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `Str | Vector`");
+								std::process::exit(1);
+							},
+							_ => {
+								println!("RTE: No implementation for `Str | Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					
+					LazyResult::None => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `None | Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `None | Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `None | Bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `None | Vector`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `None | None`");
+								std::process::exit(1);
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `None | Vector`");
+								std::process::exit(1);
+							}
+							_ => {
+								println!("RTE: No implementation for `None | Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					LazyResult::List(..) => {
+						match lazy_right_value {
+							LazyResult::Int(..) => {
+								println!("RTE: No implementation for `Vector | Int`");
+								std::process::exit(1);
+							},
+							LazyResult::Float(..) => {
+								println!("RTE: No implementation for `Vector | Float`");
+								std::process::exit(1);
+							},
+							LazyResult::Bool(..) => {
+								println!("RTE: No implementation for `Vector | Bool`");
+								std::process::exit(1);
+							},
+							LazyResult::Str(..) => {
+								println!("RTE: No implementation for `Vector | Str`");
+								std::process::exit(1);
+							},
+							LazyResult::None => {
+								println!("RTE: No implementation for `Vector | None`");
+								std::process::exit(1);
+
+							},
+							LazyResult::List(..) => {
+								println!("RTE: No implementation for `Vector | Vector`");
+								std::process::exit(1);
+
+							}
+							_ => {
+								println!("RTE: No implementation for `Vector | Type`.\nMay be caused by int.");
+								std::process::exit(1);
+							}
+						}
+					},
+					_ => {
+						println!("RTE: No implemention for {lazy_left_value:?} | Type");
+						std::process::exit(1);
+					}
+				}	
+			}, 
+			
 			_ => {
 				println!("(Int) Binary operator not Implemented {operation}");
 				std::process::exit(1);
@@ -2277,7 +4460,6 @@ impl Executor {
 		}
 	}
 	
-	// UnaryOperation { operand: Rc<ASTNode>, operator: String},
 	fn evaluate_unary_expression(&mut self, operator: String, operand: Rc<ASTNode>) -> Value {
 		match operator.as_str() {
 			"!" => {
@@ -2569,10 +4751,11 @@ impl Executor {
 				value = self.evaluate(args[i].clone());
 				lazy_argument = self.value2_lazy(value);
 				new_scope.insert(param.to_string(), Some(lazy_argument));
+				self.local_variables.push(param.to_string());
 			}
 		}
-		self.scopes.push(new_scope.clone());
-		self.current_scope = new_scope;
+		// Change scope to new scope;
+		self.set_scope(new_scope);
 
 		let func_rn = self.execute_block(block.to_vec());
 		//func_rn -> true  = function returned sth
@@ -2591,19 +4774,26 @@ impl Executor {
 		return LazyResult::Null;
 	}
 
+	fn set_scope(&mut self, scope: HashMap<String, Option<LazyResult>>) {
+		self.scopes.push(self.current_scope.clone());
+		self.current_scope = scope;
+	}
+
 	fn clean_scope(&mut self) {
 		// Remove local variables(In the current scope)
 		// formal parameter(in current scope)
 		// set current scope (top scope of self.scopes)
 		self.current_scope = match self.scopes.pop() {
-			Some(scope) => scope,
+			Some(scope) => {
+				scope
+			}
 			None => {
 				HashMap::new()
 			}
 		};
 
 		// Remove formal parameter
-		self.scopes.pop();
+		//self.scopes.pop();
 	}
 
 	fn execute_block(&mut self, block: Vec<ASTNode>) -> bool {
@@ -2618,13 +4808,7 @@ impl Executor {
 		return false;
 	}
 
-	fn func_declaration(
-		&mut self,
-		name: Rc<ASTNode>,
-		parameters: (Option<Vec<ASTNode>>, Option<Vec<ASTNode>>),
-		block: Vec<ASTNode>
-	) -> LazyResult
-	{
+	fn func_declaration(&mut self, name: Rc<ASTNode>, parameters: (Option<Vec<ASTNode>>, Option<Vec<ASTNode>>),	block: Vec<ASTNode>) -> LazyResult {
 		if let Some(mut funcs) = self.functions.pop() {
 			let name: String = match *name {
 				ASTNode::ID{ref name} => {

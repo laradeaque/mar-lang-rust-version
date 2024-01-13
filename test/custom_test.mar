@@ -1,17 +1,5 @@
-let x = 5;
-let y = 3;
 
-fn sub(a, b) {
-	let c = a - b;
-	rn c;
-}
-
-let z = sub(x, y);
-println(3 *  "i love ")
-println("i love " + "you")
-
-
-# "i love " + "you" #valid
-# "i love " * 3  #valid
-# 3 *  "i love " #valid
-
+println("Mar is Bold")
+println("Mar is Strong")
+println("... and")
+println("Mar is Maa")

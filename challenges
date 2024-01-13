@@ -10,4 +10,13 @@ and why waste compute power computing.
 
 
 
-
+Future version work on borrowing and ownership system;
+3. Borrowing and Ownership system
+  I must be open with you guys, as I didn't expect Mar to extend this powerful Rust feature 
+  but I love it why not be in Mar.
+  Borrowing and ownership system tends to be a powerful and robust feature in the language 
+  itself.
+  Theoretically, through borrowing and ownership system in place memory corruption and data
+  race to be swiped off.
+  Since I am having this big vision for Mar, am going to support this feature all through
+  as I continue to work on the language.

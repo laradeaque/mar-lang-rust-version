@@ -1,0 +1,66 @@
+- Mar will decide the output of the expression by the type of the first expression.
+eg
+
+let x = 3 + 2.5;
+
+type of x is Int: Note x != 6 (because of "round off") but x == 5
+but
+
+let x = 3.5 + 2;
+type of x is Float
+
+Comparing Strings
+- When you use
+
+
+"abc" > "xyz"
+
+You are checking which is later in the alphabet i.e a (equal to 1)- z(equal to 26)
+thus 1 > 26 is false. 
+
+
+You can index a vector with -ve values.
+
+
+
+>>>>>>>>>>>>>This is valid
+struct Base;                     #valid
+
+'''''''''''''''''''''''''''''''''''''''WE ARE HERE
+struct Car {
+	make,
+	model,
+	year
+}
+
+
+impl Car {}
+
+let audi = Car("Audi", "S8", 2019);
+
+println("My car details")
+println(audi)
+
+
+''''''''''''''''''''''''''''''''''''''''''''''''''''''''
+impl Car {
+	fn new(self, make, model, year) {
+		let self.make = make;
+		let self.model = model;
+		let self.year = year;
+
+		let self.milage = 0;
+	}
+
+	fn drive(self) {
+		println("Driving " + self.make + " " + self.model + " ...")
+		let self.milage = 10;
+		let i = 0;
+		while (i<self.milage) {
+			print(".")
+			i++;
+		}
+		println()
+	}
+}
+
