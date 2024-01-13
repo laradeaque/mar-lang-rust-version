@@ -1,3 +1,1 @@
-fn main() {
-    println!("true > false = {}", 1 && 3);
-}
+fn main() {}
